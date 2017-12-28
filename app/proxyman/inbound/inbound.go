@@ -26,33 +26,39 @@ func (m *Manager) AddHandler(ctx context.Context, config *proxyman.InboundHandle
 	if err != nil {
 		return err
 	}
-	receiverSettings, ok := rawReceiverSettings.(*proxyman.ReceiverConfig)
-	if !ok {
-		return newError("not a ReceiverConfig")
-	}
-	proxySettings, err := config.ProxySettings.GetInstance()
-	if err != nil {
-		return err
-	}
 	var handler proxyman.InboundHandler
 	tag := config.Tag
-	allocStrategy := receiverSettings.AllocationStrategy
-	if allocStrategy == nil || allocStrategy.Type == proxyman.AllocationStrategy_Always {
-		h, err := NewAlwaysOnInboundHandler(ctx, tag, receiverSettings, proxySettings)
-		if err != nil {
-			return err
-		}
-		handler = h
-	} else if allocStrategy.Type == proxyman.AllocationStrategy_Random {
-		h, err := NewDynamicInboundHandler(ctx, tag, receiverSettings, proxySettings)
-		if err != nil {
-			return err
-		}
-		handler = h
-	}
 
-	if handler == nil {
-		return newError("unknown allocation strategy: ", receiverSettings.AllocationStrategy.Type)
+	switch rawReceiverSettings.(type) {
+	case *proxyman.ReceiverConfig:
+		receiverSettings, ok := rawReceiverSettings.(*proxyman.ReceiverConfig)
+		if !ok {
+			return newError("not a ReceiverConfig")
+		}
+		proxySettings, err := config.ProxySettings.GetInstance()
+		if err != nil {
+			return err
+		}
+
+		allocStrategy := receiverSettings.AllocationStrategy
+		if allocStrategy == nil || allocStrategy.Type == proxyman.AllocationStrategy_Always {
+			h, err := NewAlwaysOnInboundHandler(ctx, tag, receiverSettings, proxySettings)
+			if err != nil {
+				return err
+			}
+			handler = h
+		} else if allocStrategy.Type == proxyman.AllocationStrategy_Random {
+			h, err := NewDynamicInboundHandler(ctx, tag, receiverSettings, proxySettings)
+			if err != nil {
+				return err
+			}
+			handler = h
+		}
+
+		if handler == nil {
+			return newError("unknown allocation strategy: ", receiverSettings.AllocationStrategy.Type)
+		}
+	case *proxyman.UnixReceiverConfig:
 	}
 
 	m.handlers = append(m.handlers, handler)
@@ -87,6 +93,10 @@ func (m *Manager) Close() {
 
 func (m *Manager) Interface() interface{} {
 	return (*proxyman.InboundHandlerManager)(nil)
+}
+
+func (m *Manager) addUnixReceiverConfig(ctx context.Context, config *proxyman.InboundHandlerConfig) {
+
 }
 
 func init() {
