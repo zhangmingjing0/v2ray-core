@@ -59,6 +59,10 @@ func (m *Manager) AddHandler(ctx context.Context, config *proxyman.InboundHandle
 			return newError("unknown allocation strategy: ", receiverSettings.AllocationStrategy.Type)
 		}
 	case *proxyman.UnixReceiverConfig:
+		handler, err = m.getUnixReceiverHandler(ctx, config)
+		if err != nil {
+			return err
+		}
 	}
 
 	m.handlers = append(m.handlers, handler)
@@ -95,8 +99,9 @@ func (m *Manager) Interface() interface{} {
 	return (*proxyman.InboundHandlerManager)(nil)
 }
 
-func (m *Manager) addUnixReceiverConfig(ctx context.Context, config *proxyman.InboundHandlerConfig) {
+func (m *Manager) getUnixReceiverHandler(ctx context.Context, config *proxyman.InboundHandlerConfig) (proxyman.InboundHandler, error) {
 
+	return nil, newError("TODO")
 }
 
 func init() {
