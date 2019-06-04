@@ -1,6 +1,6 @@
 package inbound
 
-//go:generate go run $GOPATH/src/v2ray.com/core/common/errors/errorgen/main.go -pkg inbound -path App,Proxyman,Inbound
+//go:generate errorgen
 
 import (
 	"context"
@@ -9,30 +9,34 @@ import (
 	"v2ray.com/core"
 	"v2ray.com/core/app/proxyman"
 	"v2ray.com/core/common"
+	"v2ray.com/core/common/serial"
+	"v2ray.com/core/common/session"
+	"v2ray.com/core/features/inbound"
 )
 
 // Manager is to manage all inbound handlers.
 type Manager struct {
 	access          sync.RWMutex
-	untaggedHandler []core.InboundHandler
-	taggedHandlers  map[string]core.InboundHandler
+	untaggedHandler []inbound.Handler
+	taggedHandlers  map[string]inbound.Handler
 	running         bool
 }
 
 // New returns a new Manager for inbound handlers.
 func New(ctx context.Context, config *proxyman.InboundConfig) (*Manager, error) {
 	m := &Manager{
-		taggedHandlers: make(map[string]core.InboundHandler),
-	}
-	v := core.MustFromContext(ctx)
-	if err := v.RegisterFeature((*core.InboundHandlerManager)(nil), m); err != nil {
-		return nil, newError("unable to register InboundHandlerManager").Base(err)
+		taggedHandlers: make(map[string]inbound.Handler),
 	}
 	return m, nil
 }
 
-// AddHandler implements core.InboundHandlerManager.
-func (m *Manager) AddHandler(ctx context.Context, handler core.InboundHandler) error {
+// Type implements common.HasType.
+func (*Manager) Type() interface{} {
+	return inbound.ManagerType()
+}
+
+// AddHandler implements inbound.Manager.
+func (m *Manager) AddHandler(ctx context.Context, handler inbound.Handler) error {
 	m.access.Lock()
 	defer m.access.Unlock()
 
@@ -50,8 +54,8 @@ func (m *Manager) AddHandler(ctx context.Context, handler core.InboundHandler) e
 	return nil
 }
 
-// GetHandler returns core.InboundHandlerManager.
-func (m *Manager) GetHandler(ctx context.Context, tag string) (core.InboundHandler, error) {
+// GetHandler implements inbound.Manager.
+func (m *Manager) GetHandler(ctx context.Context, tag string) (inbound.Handler, error) {
 	m.access.RLock()
 	defer m.access.RUnlock()
 
@@ -62,23 +66,27 @@ func (m *Manager) GetHandler(ctx context.Context, tag string) (core.InboundHandl
 	return handler, nil
 }
 
+// RemoveHandler implements inbound.Manager.
 func (m *Manager) RemoveHandler(ctx context.Context, tag string) error {
 	if len(tag) == 0 {
-		return core.ErrNoClue
+		return common.ErrNoClue
 	}
 
 	m.access.Lock()
 	defer m.access.Unlock()
 
 	if handler, found := m.taggedHandlers[tag]; found {
-		handler.Close()
+		if err := handler.Close(); err != nil {
+			newError("failed to close handler ", tag).Base(err).AtWarning().WriteToLog(session.ExportIDToError(ctx))
+		}
 		delete(m.taggedHandlers, tag)
 		return nil
 	}
 
-	return core.ErrNoClue
+	return common.ErrNoClue
 }
 
+// Start implements common.Runnable.
 func (m *Manager) Start() error {
 	m.access.Lock()
 	defer m.access.Unlock()
@@ -99,36 +107,49 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+// Close implements common.Closable.
 func (m *Manager) Close() error {
 	m.access.Lock()
 	defer m.access.Unlock()
 
 	m.running = false
 
+	var errors []interface{}
 	for _, handler := range m.taggedHandlers {
-		handler.Close()
+		if err := handler.Close(); err != nil {
+			errors = append(errors, err)
+		}
 	}
 	for _, handler := range m.untaggedHandler {
-		handler.Close()
+		if err := handler.Close(); err != nil {
+			errors = append(errors, err)
+		}
+	}
+
+	if len(errors) > 0 {
+		return newError("failed to close all handlers").Base(newError(serial.Concat(errors...)))
 	}
 
 	return nil
 }
 
-func NewHandler(ctx context.Context, config *core.InboundHandlerConfig) (core.InboundHandler, error) {
+// NewHandler creates a new inbound.Handler based on the given config.
+func NewHandler(ctx context.Context, config *core.InboundHandlerConfig) (inbound.Handler, error) {
 	rawReceiverSettings, err := config.ReceiverSettings.GetInstance()
 	if err != nil {
 		return nil, err
-	}
-	receiverSettings, ok := rawReceiverSettings.(*proxyman.ReceiverConfig)
-	if !ok {
-		return nil, newError("not a ReceiverConfig").AtError()
 	}
 	proxySettings, err := config.ProxySettings.GetInstance()
 	if err != nil {
 		return nil, err
 	}
 	tag := config.Tag
+
+	receiverSettings, ok := rawReceiverSettings.(*proxyman.ReceiverConfig)
+	if !ok {
+		return nil, newError("not a ReceiverConfig").AtError()
+	}
+
 	allocStrategy := receiverSettings.AllocationStrategy
 	if allocStrategy == nil || allocStrategy.Type == proxyman.AllocationStrategy_Always {
 		return NewAlwaysOnInboundHandler(ctx, tag, receiverSettings, proxySettings)

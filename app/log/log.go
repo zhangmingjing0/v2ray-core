@@ -1,17 +1,18 @@
+// +build !confonly
+
 package log
 
-//go:generate go run $GOPATH/src/v2ray.com/core/common/errors/errorgen/main.go -pkg log -path App,Log
+//go:generate errorgen
 
 import (
 	"context"
 	"sync"
 
-	"v2ray.com/core"
 	"v2ray.com/core/common"
 	"v2ray.com/core/common/log"
 )
 
-// Instance is an app.Application that handles logs.
+// Instance is a log.Handler that handles logs.
 type Instance struct {
 	sync.RWMutex
 	config       *Config
@@ -28,41 +29,28 @@ func New(ctx context.Context, config *Config) (*Instance, error) {
 	}
 	log.RegisterHandler(g)
 
-	v := core.FromContext(ctx)
-	if v != nil {
-		common.Must(v.RegisterFeature((*log.Handler)(nil), g))
-	}
-
 	return g, nil
 }
 
 func (g *Instance) initAccessLogger() error {
-	switch g.config.AccessLogType {
-	case LogType_File:
-		creator, err := log.CreateFileLogWriter(g.config.AccessLogPath)
-		if err != nil {
-			return err
-		}
-		g.accessLogger = log.NewLogger(creator)
-	case LogType_Console:
-		g.accessLogger = log.NewLogger(log.CreateStdoutLogWriter())
-	default:
+	handler, err := createHandler(g.config.AccessLogType, HandlerCreatorOptions{
+		Path: g.config.AccessLogPath,
+	})
+	if err != nil {
+		return err
 	}
+	g.accessLogger = handler
 	return nil
 }
 
 func (g *Instance) initErrorLogger() error {
-	switch g.config.ErrorLogType {
-	case LogType_File:
-		creator, err := log.CreateFileLogWriter(g.config.ErrorLogPath)
-		if err != nil {
-			return err
-		}
-		g.errorLogger = log.NewLogger(creator)
-	case LogType_Console:
-		g.errorLogger = log.NewLogger(log.CreateStdoutLogWriter())
-	default:
+	handler, err := createHandler(g.config.ErrorLogType, HandlerCreatorOptions{
+		Path: g.config.ErrorLogPath,
+	})
+	if err != nil {
+		return err
 	}
+	g.errorLogger = handler
 	return nil
 }
 
@@ -91,7 +79,7 @@ func (g *Instance) startInternal() error {
 	return nil
 }
 
-// Start implements app.Application.Start().
+// Start implements common.Runnable.Start().
 func (g *Instance) Start() error {
 	if err := g.startInternal(); err != nil {
 		return err
@@ -125,7 +113,7 @@ func (g *Instance) Handle(msg log.Message) {
 	}
 }
 
-// Close implement app.Application.Close().
+// Close implements common.Closable.Close().
 func (g *Instance) Close() error {
 	newError("Logger closing").AtDebug().WriteToLog()
 
@@ -138,10 +126,10 @@ func (g *Instance) Close() error {
 
 	g.active = false
 
-	common.Close(g.accessLogger)
+	common.Close(g.accessLogger) // nolint: errcheck
 	g.accessLogger = nil
 
-	common.Close(g.errorLogger)
+	common.Close(g.errorLogger) // nolint: errcheck
 	g.errorLogger = nil
 
 	return nil

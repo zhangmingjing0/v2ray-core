@@ -16,6 +16,7 @@ import (
 	_ "v2ray.com/core/app/proxyman/inbound"
 	_ "v2ray.com/core/app/proxyman/outbound"
 	"v2ray.com/core/app/router"
+	"v2ray.com/core/common"
 	clog "v2ray.com/core/common/log"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/common/protocol"
@@ -32,21 +33,18 @@ import (
 	"v2ray.com/core/testing/servers/tcp"
 	"v2ray.com/core/testing/servers/udp"
 	"v2ray.com/core/transport/internet"
-	. "v2ray.com/ext/assert"
 )
 
 func TestPassiveConnection(t *testing.T) {
-	assert := With(t)
-
 	tcpServer := tcp.Server{
 		MsgProcessor: xor,
 		SendFirst:    []byte("send first"),
 	}
 	dest, err := tcpServer.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer tcpServer.Close()
 
-	serverPort := pickPort()
+	serverPort := tcp.PickPort()
 	serverConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -71,53 +69,39 @@ func TestPassiveConnection(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(serverConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
 	conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{
 		IP:   []byte{127, 0, 0, 1},
 		Port: int(serverPort),
 	})
-	assert(err, IsNil)
+	common.Must(err)
 
 	{
 		response := make([]byte, 1024)
 		nBytes, err := conn.Read(response)
-		assert(err, IsNil)
-		assert(string(response[:nBytes]), Equals, "send first")
+		common.Must(err)
+		if string(response[:nBytes]) != "send first" {
+			t.Error("unexpected first response: ", string(response[:nBytes]))
+		}
 	}
 
-	payload := "dokodemo request."
-	{
-
-		nBytes, err := conn.Write([]byte(payload))
-		assert(err, IsNil)
-		assert(nBytes, Equals, len(payload))
+	if err := testTCPConn2(conn, 1024, time.Second*5)(); err != nil {
+		t.Error(err)
 	}
-
-	{
-		response := make([]byte, 1024)
-		nBytes, err := conn.Read(response)
-		assert(err, IsNil)
-		assert(response[:nBytes], Equals, xor([]byte(payload)))
-	}
-
-	assert(conn.Close(), IsNil)
-
-	CloseAllServers(servers)
 }
 
 func TestProxy(t *testing.T) {
-	assert := With(t)
-
 	tcpServer := tcp.Server{
 		MsgProcessor: xor,
 	}
 	dest, err := tcpServer.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer tcpServer.Close()
 
 	serverUserID := protocol.NewID(uuid.New())
-	serverPort := pickPort()
+	serverPort := tcp.PickPort()
 	serverConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -144,7 +128,7 @@ func TestProxy(t *testing.T) {
 	}
 
 	proxyUserID := protocol.NewID(uuid.New())
-	proxyPort := pickPort()
+	proxyPort := tcp.PickPort()
 	proxyConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -170,7 +154,7 @@ func TestProxy(t *testing.T) {
 		},
 	}
 
-	clientPort := pickPort()
+	clientPort := tcp.PickPort()
 	clientConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -232,40 +216,24 @@ func TestProxy(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(serverConfig, proxyConfig, clientConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
-	conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{
-		IP:   []byte{127, 0, 0, 1},
-		Port: int(clientPort),
-	})
-	assert(err, IsNil)
-
-	payload := "dokodemo request."
-	nBytes, err := conn.Write([]byte(payload))
-	assert(err, IsNil)
-	assert(nBytes, Equals, len(payload))
-
-	response := make([]byte, 1024)
-	nBytes, err = conn.Read(response)
-	assert(err, IsNil)
-	assert(response[:nBytes], Equals, xor([]byte(payload)))
-	assert(conn.Close(), IsNil)
-
-	CloseAllServers(servers)
+	if err := testTCPConn(clientPort, 1024, time.Second*5)(); err != nil {
+		t.Error(err)
+	}
 }
 
 func TestProxyOverKCP(t *testing.T) {
-	assert := With(t)
-
 	tcpServer := tcp.Server{
 		MsgProcessor: xor,
 	}
 	dest, err := tcpServer.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer tcpServer.Close()
 
 	serverUserID := protocol.NewID(uuid.New())
-	serverPort := pickPort()
+	serverPort := tcp.PickPort()
 	serverConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -295,7 +263,7 @@ func TestProxyOverKCP(t *testing.T) {
 	}
 
 	proxyUserID := protocol.NewID(uuid.New())
-	proxyPort := pickPort()
+	proxyPort := tcp.PickPort()
 	proxyConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -326,7 +294,7 @@ func TestProxyOverKCP(t *testing.T) {
 		},
 	}
 
-	clientPort := pickPort()
+	clientPort := tcp.PickPort()
 	clientConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -391,47 +359,31 @@ func TestProxyOverKCP(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(serverConfig, proxyConfig, clientConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
-	conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{
-		IP:   []byte{127, 0, 0, 1},
-		Port: int(clientPort),
-	})
-	assert(err, IsNil)
-
-	payload := "dokodemo request."
-	nBytes, err := conn.Write([]byte(payload))
-	assert(err, IsNil)
-	assert(nBytes, Equals, len(payload))
-
-	response := make([]byte, 1024)
-	nBytes, err = conn.Read(response)
-	assert(err, IsNil)
-	assert(response[:nBytes], Equals, xor([]byte(payload)))
-	assert(conn.Close(), IsNil)
-
-	CloseAllServers(servers)
+	if err := testTCPConn(clientPort, 1024, time.Second*5)(); err != nil {
+		t.Error(err)
+	}
 }
 
 func TestBlackhole(t *testing.T) {
-	assert := With(t)
-
 	tcpServer := tcp.Server{
 		MsgProcessor: xor,
 	}
 	dest, err := tcpServer.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer tcpServer.Close()
 
 	tcpServer2 := tcp.Server{
 		MsgProcessor: xor,
 	}
 	dest2, err := tcpServer2.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer tcpServer2.Close()
 
-	serverPort := pickPort()
-	serverPort2 := pickPort()
+	serverPort := tcp.PickPort()
+	serverPort2 := tcp.PickPort()
 	serverConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -475,7 +427,9 @@ func TestBlackhole(t *testing.T) {
 			serial.ToTypedMessage(&router.Config{
 				Rule: []*router.RoutingRule{
 					{
-						Tag:       "blocked",
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "blocked",
+						},
 						PortRange: net.SinglePortRange(dest2.Port),
 					},
 				},
@@ -484,44 +438,23 @@ func TestBlackhole(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(serverConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
-	conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{
-		IP:   []byte{127, 0, 0, 1},
-		Port: int(serverPort2),
-	})
-	assert(err, IsNil)
-
-	payload := "dokodemo request."
-	{
-
-		nBytes, err := conn.Write([]byte(payload))
-		assert(err, IsNil)
-		assert(nBytes, Equals, len(payload))
+	if err := testTCPConn(serverPort2, 1024, time.Second*5)(); err == nil {
+		t.Error("nil error")
 	}
-
-	{
-		response := make([]byte, 1024)
-		_, err := conn.Read(response)
-		assert(err, IsNotNil)
-	}
-
-	assert(conn.Close(), IsNil)
-
-	CloseAllServers(servers)
 }
 
 func TestForward(t *testing.T) {
-	assert := With(t)
-
 	tcpServer := tcp.Server{
 		MsgProcessor: xor,
 	}
 	dest, err := tcpServer.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer tcpServer.Close()
 
-	serverPort := pickPort()
+	serverPort := tcp.PickPort()
 	serverConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -554,40 +487,31 @@ func TestForward(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(serverConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
 	{
 		noAuthDialer, err := xproxy.SOCKS5("tcp", net.TCPDestination(net.LocalHostIP, serverPort).NetAddr(), nil, xproxy.Direct)
-		assert(err, IsNil)
+		common.Must(err)
 		conn, err := noAuthDialer.Dial("tcp", "google.com:80")
-		assert(err, IsNil)
+		common.Must(err)
+		defer conn.Close()
 
-		payload := "test payload"
-		nBytes, err := conn.Write([]byte(payload))
-		assert(err, IsNil)
-		assert(nBytes, Equals, len(payload))
-
-		response := make([]byte, 1024)
-		nBytes, err = conn.Read(response)
-		assert(err, IsNil)
-		assert(response[:nBytes], Equals, xor([]byte(payload)))
-		assert(conn.Close(), IsNil)
+		if err := testTCPConn2(conn, 1024, time.Second*5)(); err != nil {
+			t.Error(err)
+		}
 	}
-
-	CloseAllServers(servers)
 }
 
 func TestUDPConnection(t *testing.T) {
-	assert := With(t)
-
 	udpServer := udp.Server{
 		MsgProcessor: xor,
 	}
 	dest, err := udpServer.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer udpServer.Close()
 
-	clientPort := pickPort()
+	clientPort := tcp.PickPort()
 	clientConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -612,59 +536,23 @@ func TestUDPConnection(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(clientConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
-	{
-		conn, err := net.DialUDP("udp", nil, &net.UDPAddr{
-			IP:   []byte{127, 0, 0, 1},
-			Port: int(clientPort),
-		})
-		assert(err, IsNil)
-
-		payload := "dokodemo request."
-		for i := 0; i < 5; i++ {
-			nBytes, err := conn.Write([]byte(payload))
-			assert(err, IsNil)
-			assert(nBytes, Equals, len(payload))
-
-			response := make([]byte, 1024)
-			nBytes, err = conn.Read(response)
-			assert(err, IsNil)
-			assert(response[:nBytes], Equals, xor([]byte(payload)))
-		}
-
-		assert(conn.Close(), IsNil)
+	if err := testUDPConn(clientPort, 1024, time.Second*5)(); err != nil {
+		t.Error(err)
 	}
 
 	time.Sleep(20 * time.Second)
 
-	{
-		conn, err := net.DialUDP("udp", nil, &net.UDPAddr{
-			IP:   []byte{127, 0, 0, 1},
-			Port: int(clientPort),
-		})
-		assert(err, IsNil)
-
-		payload := "dokodemo request."
-		nBytes, err := conn.Write([]byte(payload))
-		assert(err, IsNil)
-		assert(nBytes, Equals, len(payload))
-
-		response := make([]byte, 1024)
-		nBytes, err = conn.Read(response)
-		assert(err, IsNil)
-		assert(response[:nBytes], Equals, xor([]byte(payload)))
-		assert(conn.Close(), IsNil)
+	if err := testUDPConn(clientPort, 1024, time.Second*5)(); err != nil {
+		t.Error(err)
 	}
-
-	CloseAllServers(servers)
 }
 
 func TestDomainSniffing(t *testing.T) {
-	assert := With(t)
-
-	sniffingPort := pickPort()
-	httpPort := pickPort()
+	sniffingPort := tcp.PickPort()
+	httpPort := tcp.PickPort()
 	serverConfig := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -714,10 +602,14 @@ func TestDomainSniffing(t *testing.T) {
 			serial.ToTypedMessage(&router.Config{
 				Rule: []*router.RoutingRule{
 					{
-						Tag:        "direct",
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "direct",
+						},
 						InboundTag: []string{"snif"},
 					}, {
-						Tag:        "redir",
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "redir",
+						},
 						InboundTag: []string{"http"},
 					},
 				},
@@ -730,7 +622,8 @@ func TestDomainSniffing(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(serverConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
 	{
 		transport := &http.Transport{
@@ -744,27 +637,24 @@ func TestDomainSniffing(t *testing.T) {
 		}
 
 		resp, err := client.Get("https://www.github.com/")
-		assert(err, IsNil)
-		assert(resp.StatusCode, Equals, 200)
-
-		assert(resp.Write(ioutil.Discard), IsNil)
+		common.Must(err)
+		if resp.StatusCode != 200 {
+			t.Error("unexpected status code: ", resp.StatusCode)
+		}
+		common.Must(resp.Write(ioutil.Discard))
 	}
-
-	CloseAllServers(servers)
 }
 
 func TestDialV2Ray(t *testing.T) {
-	assert := With(t)
-
 	tcpServer := tcp.Server{
 		MsgProcessor: xor,
 	}
 	dest, err := tcpServer.Start()
-	assert(err, IsNil)
+	common.Must(err)
 	defer tcpServer.Close()
 
 	userID := protocol.NewID(uuid.New())
-	serverPort := pickPort()
+	serverPort := tcp.PickPort()
 	serverConfig := &core.Config{
 		App: []*serial.TypedMessage{
 			serial.ToTypedMessage(&log.Config{
@@ -830,24 +720,17 @@ func TestDialV2Ray(t *testing.T) {
 	}
 
 	servers, err := InitializeServerConfigs(serverConfig)
-	assert(err, IsNil)
+	common.Must(err)
+	defer CloseAllServers(servers)
 
 	client, err := core.New(clientConfig)
-	assert(err, IsNil)
+	common.Must(err)
 
 	conn, err := core.Dial(context.Background(), client, dest)
-	assert(err, IsNil)
+	common.Must(err)
+	defer conn.Close()
 
-	payload := "commander request."
-	nBytes, err := conn.Write([]byte(payload))
-	assert(err, IsNil)
-	assert(nBytes, Equals, len(payload))
-
-	response := make([]byte, 1024)
-	nBytes, err = conn.Read(response)
-	assert(err, IsNil)
-	assert(response[:nBytes], Equals, xor([]byte(payload)))
-	assert(conn.Close(), IsNil)
-
-	CloseAllServers(servers)
+	if err := testTCPConn2(conn, 1024, time.Second*5)(); err != nil {
+		t.Error(err)
+	}
 }
